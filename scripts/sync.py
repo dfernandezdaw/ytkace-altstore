@@ -150,7 +150,7 @@ def source_document(release, records):
     privacy = {}
     for record in reversed(ordered):
         privacy.update(record.get("privacy", {}))
-    app = {"bundleIdentifier": ordered[0]["bundleIdentifier"], "name": "YTKACE", "developerName": "itzzace", "localizedDescription": "YTKACE para AltStore.", "iconURL": "https://raw.githubusercontent.com/itzzace/ytkace/main/screenshots/framed/settings.png", "versions": [], "appPermissions": {"entitlements": entitlements, "privacy": privacy}}
+    app = {"bundleIdentifier": ordered[0]["bundleIdentifier"], "name": "YTKACE", "developerName": "itzzace", "localizedDescription": "YTKACE para AltStore.", "iconURL": "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/14/ce/45/14ce45d8-5ca6-1dfa-c4a5-4660061cf213/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/512x512bb.jpg", "versions": [], "appPermissions": {"entitlements": entitlements, "privacy": privacy}}
     for meta in ordered:
         app["versions"].append({"version": meta["version"], "buildVersion": meta["buildVersion"], "date": release.get("published_at") or datetime.now(timezone.utc).isoformat(), "downloadURL": meta["downloadURL"], "size": meta["size"], "minOSVersion": meta["minOSVersion"]})
     return {"name": "YTKACE", "apps": [app], "news": []}

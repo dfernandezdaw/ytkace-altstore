@@ -120,6 +120,14 @@ class SyncTests(unittest.TestCase):
                                 sync_module.sync()
             self.assertEqual(source_path.read_text(), "existing source\n")
 
+    def test_source_uses_official_youtube_icon(self):
+        icon_url = "https://is1-ssl.mzstatic.com/image/thumb/Purple221/v4/14/ce/45/14ce45d8-5ca6-1dfa-c4a5-4660061cf213/logo_youtube_2024_q4_color-0-0-1x_U007emarketing-0-0-0-7-0-0-0-85-220.png/512x512bb.jpg"
+        record = {"bundleIdentifier": "com.google.ios.youtube", "version": "1", "buildVersion": "1", "size": 7, "minOSVersion": "16.0", "entitlements": [], "privacy": {}, "downloadURL": "https://github.com/itzzace/ytkace/releases/download/v1/YTKACE-iOS16.ipa"}
+        generated = source_document({"published_at": "2025-01-01T00:00:00Z"}, [record])
+        self.assertEqual(generated["apps"][0]["iconURL"], icon_url)
+        checked_in = json.loads((Path(__file__).resolve().parents[1] / "source.json").read_text())
+        self.assertEqual(checked_in["apps"][0]["iconURL"], icon_url)
+
     def test_source_uses_official_urls_and_supports_one_or_two_versions(self):
         base = {"bundleIdentifier": "example.ytkace", "version": "1", "buildVersion": "1", "size": 7, "minOSVersion": "16.0", "entitlements": ["aps-environment"], "privacy": {"NSCameraUsageDescription": "Camera"}, "downloadURL": "https://github.com/itzzace/ytkace/releases/download/v1/YTKACE-iOS16.ipa"}
         newer = {**base, "minOSVersion": "18.0", "downloadURL": "https://github.com/itzzace/ytkace/releases/download/v1/YTKACE-iOS17.ipa"}
