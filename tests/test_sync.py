@@ -82,6 +82,11 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(doc["apps"][0]["appPermissions"], {"entitlements": ["aps-environment"], "privacy": {"NSCameraUsageDescription": "Camera"}})
         self.assertTrue(doc["apps"][0]["iconURL"].startswith("https://"))
 
+    def test_workflow_uses_supported_macos_runner(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/sync.yml").read_text()
+        self.assertIn("    runs-on: macos-15\n", workflow)
+        self.assertNotIn("runs-on: macos-14", workflow)
+
     def test_release_upload_url_uses_name_query_parameter(self):
         self.assertEqual(
             release_upload_url("https://uploads.github.com/repos/o/r/releases/1/assets{?name,label}", "YTKACE iOS16.ipa.uploading"),
