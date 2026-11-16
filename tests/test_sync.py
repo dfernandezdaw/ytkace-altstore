@@ -1,3 +1,4 @@
+import io
 import json
 import os
 import plistlib
@@ -6,12 +7,12 @@ import sys
 import tempfile
 import unittest
 import zipfile
+from contextlib import redirect_stdout
 from pathlib import Path
-from types import SimpleNamespace
 from unittest.mock import call, patch
 
 import scripts.sync as sync_module
-from scripts.sync import SyncError, extract_metadata, release_upload_url, replace_release_asset, source_document, validate_release, validate_variant_minimum_os, variant_for
+from scripts.sync import SyncError, extract_metadata, source_document, validate_release, validate_variant_minimum_os, variant_for
 
 class SyncTests(unittest.TestCase):
     def test_variant_classification(self):
@@ -19,11 +20,21 @@ class SyncTests(unittest.TestCase):
         self.assertEqual(variant_for("YTKACE_1.1.8_YouTube_21.46.3.ipa"), None)
         self.assertEqual(variant_for("YTKACE_1.1.8_YouTube_iOS17_21.46.3.ipa"), "ios17")
 
-    def test_validate_upstream_assets(self):
-        assets = [{"name": "x_iOS16.ipa"}, {"name": "x_iOS17.ipa"}]
-        self.assertEqual(set(validate_release({"assets": assets})), {"ios16", "ios17"})
-        with self.assertRaises(SyncError): validate_release({"assets": assets[:1]})
-        with self.assertRaises(SyncError): validate_release({"assets": assets + [{"name": "y_iOS16.ipa"}]})
+    def test_validate_upstream_assets_accepts_one_or_two_ipas(self):
+        assets = [
+            {"name": "x_iOS16.ipa", "size": 10, "browser_download_url": "https://github.com/itzzace/ytkace/releases/download/v1/x_iOS16.ipa"},
+            {"name": "x_21.46.3.ipa", "size": 11, "browser_download_url": "https://github.com/itzzace/ytkace/releases/download/v1/x_21.46.3.ipa"},
+        ]
+        self.assertEqual(validate_release({"assets": assets}), assets)
+        self.assertEqual(validate_release({"assets": assets[:1]}), assets[:1])
+        with self.assertRaises(SyncError):
+            validate_release({"assets": []})
+        extra = {"name": "extra.ipa", "size": 12, "browser_download_url": "https://github.com/itzzace/ytkace/releases/download/v1/extra.ipa"}
+        with self.assertRaises(SyncError):
+            validate_release({"assets": assets + [extra]})
+        forged = {**assets[0], "browser_download_url": "https://example.com/ipa.ipa"}
+        with self.assertRaisesRegex(SyncError, "not an official upstream"):
+            validate_release({"assets": [forged]})
 
     def test_extract_fixture_metadata(self):
         with tempfile.TemporaryDirectory() as td:
@@ -68,123 +79,80 @@ class SyncTests(unittest.TestCase):
         with self.assertRaises(SyncError): validate_variant_minimum_os("ios17", "16.0")
         with self.assertRaises(SyncError): validate_variant_minimum_os("ios16", None)
 
-    def test_source_has_two_stable_variants_and_schema_keys(self):
-        base = {"bundleIdentifier": "example.ytkace", "version": "1", "buildVersion": "1", "size": 7, "minOSVersion": "16.0", "entitlements": ["aps-environment"], "privacy": {"NSCameraUsageDescription": "Camera"}}
-        doc = source_document({"published_at": "2025-01-01T00:00:00Z"}, {"ios16": base, "ios17": {**base, "minOSVersion": "18.0"}})
+    def test_source_uses_official_urls_and_supports_one_or_two_versions(self):
+        base = {"bundleIdentifier": "example.ytkace", "version": "1", "buildVersion": "1", "size": 7, "minOSVersion": "16.0", "entitlements": ["aps-environment"], "privacy": {"NSCameraUsageDescription": "Camera"}, "downloadURL": "https://github.com/itzzace/ytkace/releases/download/v1/YTKACE-iOS16.ipa"}
+        newer = {**base, "minOSVersion": "18.0", "downloadURL": "https://github.com/itzzace/ytkace/releases/download/v1/YTKACE-iOS17.ipa"}
+        release = {"published_at": "2025-01-01T00:00:00Z"}
+        doc = source_document(release, [base, newer])
         self.assertEqual(set(doc), {"name", "apps", "news"})
         versions = doc["apps"][0]["versions"]
         self.assertEqual(len(versions), 2)
-        self.assertEqual({v["downloadURL"].rsplit("/", 1)[-1] for v in versions}, {"YTKACE-iOS16.ipa", "YTKACE-iOS17.ipa"})
-        self.assertTrue(versions[0]["downloadURL"].endswith("YTKACE-iOS17.ipa"))
+        self.assertEqual([v["downloadURL"] for v in versions], [newer["downloadURL"], base["downloadURL"]])
         self.assertEqual(versions[0]["minOSVersion"], "18.0")
-        self.assertTrue(versions[1]["downloadURL"].endswith("YTKACE-iOS16.ipa"))
         self.assertTrue(all(v["size"] == 7 for v in versions))
         self.assertEqual(doc["apps"][0]["appPermissions"], {"entitlements": ["aps-environment"], "privacy": {"NSCameraUsageDescription": "Camera"}})
         self.assertTrue(doc["apps"][0]["iconURL"].startswith("https://"))
+        single = source_document(release, [base])["apps"][0]["versions"]
+        self.assertEqual(len(single), 1)
+        self.assertEqual(single[0]["downloadURL"], base["downloadURL"])
+
+    def test_invalid_single_ipa_preserves_existing_source(self):
+        asset = {"name": "YTKACE_1.1.8_YouTube_21.46.3.ipa", "size": 100, "browser_download_url": "https://github.com/itzzace/ytkace/releases/download/v1.1.8/YTKACE_1.1.8_YouTube_21.46.3.ipa"}
+        invalid = {"bundleIdentifier": "com.google.ios.youtube", "version": "21.46.3", "buildVersion": "21.46.3", "minOSVersion": None, "entitlements": [], "privacy": {}}
+        with tempfile.TemporaryDirectory() as td:
+            source_path = Path(td) / "source.json"
+            source_path.write_text("existing source\n")
+            with patch.object(sync_module, "SOURCE_PATH", source_path):
+                with patch.object(sync_module, "json_request", return_value={"tag_name": "v1.1.8", "assets": [asset]}) as api:
+                    with patch.object(sync_module, "download", return_value=("digest", 100)) as download:
+                        with patch.object(sync_module, "extract_metadata", return_value=invalid):
+                            with patch.dict(os.environ, {"GITHUB_TOKEN": ""}):
+                                with self.assertRaisesRegex(SyncError, "MinimumOSVersion"):
+                                    sync_module.sync()
+            self.assertEqual(source_path.read_text(), "existing source\n")
+        api.assert_called_once_with(sync_module.UPSTREAM)
+        download.assert_called_once_with(asset["browser_download_url"], unittest.mock.ANY)
+
+    def test_checked_in_source_uses_official_upstream_downloads(self):
+        source_path = Path(__file__).resolve().parents[1] / "source.json"
+        doc = json.loads(source_path.read_text())
+        versions = doc["apps"][0]["versions"]
+        self.assertEqual(len(versions), 2)
+        self.assertTrue(all(v["downloadURL"].startswith("https://github.com/itzzace/ytkace/releases/download/") for v in versions))
+        self.assertFalse(any("dfernandezdaw/ytkace-altstore/releases/download" in v["downloadURL"] for v in versions))
+
+    def test_sync_uses_upstream_urls_without_release_api_or_token(self):
+        ios16 = {"name": "YTKACE_1.1.8_YouTube_iOS16_21.33.6.ipa", "size": 100, "browser_download_url": "https://github.com/itzzace/ytkace/releases/download/v1.1.8/YTKACE_1.1.8_YouTube_iOS16_21.33.6.ipa"}
+        ios17 = {"name": "YTKACE_1.1.8_YouTube_21.46.3.ipa", "size": 200, "browser_download_url": "https://github.com/itzzace/ytkace/releases/download/v1.1.8/YTKACE_1.1.8_YouTube_21.46.3.ipa"}
+        metadata = [
+            {"bundleIdentifier": "com.google.ios.youtube", "version": "21.33.6", "buildVersion": "21.33.6", "minOSVersion": "16.0", "entitlements": [], "privacy": {}},
+            {"bundleIdentifier": "com.google.ios.youtube", "version": "21.46.3", "buildVersion": "21.46.3", "minOSVersion": "17.0", "entitlements": [], "privacy": {}},
+        ]
+        for assets, records in (([ios17], [metadata[1]]), ([ios16, ios17], metadata)):
+            with self.subTest(asset_count=len(assets)), tempfile.TemporaryDirectory() as td:
+                source_path = Path(td) / "source.json"
+                with patch.object(sync_module, "SOURCE_PATH", source_path):
+                    with patch.object(sync_module, "json_request", return_value={"tag_name": "v1.1.8", "published_at": "2026-11-15T20:23:33Z", "assets": assets}) as api:
+                        with patch.object(sync_module, "download", side_effect=[("digest", a["size"]) for a in assets]) as download:
+                            with patch.object(sync_module, "extract_metadata", side_effect=records):
+                                with patch.dict(os.environ, {"GITHUB_TOKEN": ""}):
+                                    with redirect_stdout(io.StringIO()) as output:
+                                        sync_module.sync()
+                doc = json.loads(source_path.read_text())
+                self.assertEqual(api.call_args_list, [call(sync_module.UPSTREAM)])
+                self.assertEqual([item.args[0] for item in download.call_args_list], [a["browser_download_url"] for a in assets])
+                self.assertEqual({v["downloadURL"] for v in doc["apps"][0]["versions"]}, {a["browser_download_url"] for a in assets})
+                self.assertEqual(len(doc["apps"][0]["versions"]), len(assets))
+                self.assertIn("Synchronized v1.1.8", output.getvalue())
 
     def test_workflow_uses_supported_macos_runner(self):
         workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/sync.yml").read_text()
         self.assertIn("    runs-on: macos-15\n", workflow)
         self.assertNotIn("runs-on: macos-14", workflow)
 
-    def test_release_upload_url_uses_name_query_parameter(self):
-        self.assertEqual(
-            release_upload_url("https://uploads.github.com/repos/o/r/releases/1/assets{?name,label}", "YTKACE iOS16.ipa.uploading"),
-            "https://uploads.github.com/repos/o/r/releases/1/assets?name=YTKACE+iOS16.ipa.uploading",
-        )
-
-    def test_failed_upload_preserves_existing_release_asset(self):
-        old = {"id": 1, "name": "YTKACE-iOS16.ipa"}
-        with patch("scripts.sync.upload_release_asset", side_effect=OSError("upload failed")) as upload:
-            with patch("scripts.sync.rename_release_asset") as rename:
-                with patch("scripts.sync.delete_release_asset") as delete:
-                    with self.assertRaisesRegex(OSError, "upload failed"):
-                        replace_release_asset("https://api.github.com/repos/o/r", "https://uploads.github.com/assets{?name,label}", [old], old["name"], Path("new.ipa"), "token")
-        upload.assert_called_once()
-        rename.assert_not_called()
-        delete.assert_not_called()
-
-    def test_ambiguous_promotion_error_reconciles_remote_asset(self):
-        repo_api = "https://api.github.com/repos/o/r"
-        old = {"id": 1, "name": "YTKACE-iOS16.ipa"}
-        staged = {"id": 2, "name": "YTKACE-iOS16.ipa.uploading"}
-        backup = {"id": 1, "name": ".YTKACE-iOS16.ipa.previous"}
-        promoted = {"id": 2, "name": "YTKACE-iOS16.ipa"}
-        with patch("scripts.sync.upload_release_asset", return_value=staged):
-            with patch("scripts.sync.rename_release_asset", side_effect=[backup, OSError("connection reset")]):
-                with patch("scripts.sync.get_release_asset", return_value=promoted) as get_asset:
-                    with patch("scripts.sync.delete_release_asset") as delete:
-                        result = replace_release_asset(repo_api, "https://uploads.github.com/assets{?name,label}", [old], old["name"], Path("new.ipa"), "token")
-        self.assertEqual(result, promoted)
-        get_asset.assert_called_once_with(repo_api, staged, "token")
-        delete.assert_called_once_with(repo_api, backup, "token")
-
-    def test_failed_promotion_restores_old_stable_asset(self):
-        old = {"id": 1, "name": "YTKACE-iOS16.ipa"}
-        staged = {"id": 2, "name": ".YTKACE-iOS16.ipa.test.uploading"}
-        backup = {"id": 1, "name": ".YTKACE-iOS16.ipa.previous"}
-        with patch("scripts.sync.uuid.uuid4") as uuid4:
-            uuid4.return_value.hex = "test"
-            with patch("scripts.sync.upload_release_asset", return_value=staged):
-                with patch("scripts.sync.rename_release_asset", side_effect=[backup, OSError("promotion failed"), old]) as rename:
-                    with patch("scripts.sync.get_release_asset", return_value=staged):
-                        with patch("scripts.sync.delete_release_asset") as delete:
-                            with self.assertRaisesRegex(OSError, "promotion failed"):
-                                replace_release_asset("https://api.github.com/repos/o/r", "https://uploads.github.com/assets{?name,label}", [old], old["name"], Path("new.ipa"), "token")
-        self.assertEqual(rename.call_args_list[-1].args[1:3], (backup, old["name"]))
-        delete.assert_called_once_with("https://api.github.com/repos/o/r", staged, "token")
-
-    def test_pair_replacement_rolls_back_first_when_second_fails(self):
-        repo_api = "https://api.github.com/repos/o/r"
-        upload_url = "https://uploads.github.com/assets{?name,label}"
-        token = "token"
-        old16 = {"id": 1, "name": "YTKACE-iOS16.ipa"}
-        old17 = {"id": 3, "name": "YTKACE-iOS17.ipa"}
-        staged16 = {"id": 2, "name": ".YTKACE-iOS16.ipa.16.uploading"}
-        staged17 = {"id": 4, "name": ".YTKACE-iOS17.ipa.17.uploading"}
-        backup16 = {"id": 1, "name": ".YTKACE-iOS16.ipa.16.previous"}
-        backup17 = {"id": 3, "name": ".YTKACE-iOS17.ipa.17.previous"}
-        promoted16 = {"id": 2, "name": "YTKACE-iOS16.ipa"}
-        renames = [backup16, promoted16, backup17, OSError("second promotion failed"), old17, None, old16]
-        with patch("scripts.sync.uuid.uuid4", side_effect=[SimpleNamespace(hex="16"), SimpleNamespace(hex="17"), SimpleNamespace(hex="rollback")]):
-            with patch("scripts.sync.upload_release_asset", side_effect=[staged16, staged17]) as upload:
-                with patch("scripts.sync.rename_release_asset", side_effect=renames) as rename:
-                    with patch("scripts.sync.get_release_asset", return_value=staged17) as get_asset:
-                        with patch("scripts.sync.delete_release_asset") as delete:
-                            with self.assertRaisesRegex(OSError, "second promotion failed"):
-                                sync_module.replace_release_assets(
-                                    repo_api, upload_url, [old16, old17],
-                                    [("YTKACE-iOS16.ipa", Path("ios16.ipa")), ("YTKACE-iOS17.ipa", Path("ios17.ipa"))],
-                                    token,
-                                )
-        self.assertEqual(upload.call_count, 2)
-        self.assertEqual(get_asset.call_args, call(repo_api, staged17, token))
-        self.assertEqual(rename.call_count, 7)
-        self.assertEqual(rename.call_args_list[1], call(repo_api, staged16, "YTKACE-iOS16.ipa", token))
-        self.assertEqual(rename.call_args_list[4], call(repo_api, backup17, "YTKACE-iOS17.ipa", token))
-        first_rollback = rename.call_args_list[5].args
-        self.assertEqual(first_rollback[:2], (repo_api, promoted16))
-        self.assertTrue(first_rollback[2].startswith(".YTKACE-iOS16.ipa."))
-        self.assertTrue(first_rollback[2].endswith(".rollback"))
-        self.assertEqual(rename.call_args_list[6], call(repo_api, backup16, "YTKACE-iOS16.ipa", token))
-        self.assertEqual(delete.call_args_list, [call(repo_api, staged17, token), call(repo_api, promoted16, token)])
-
-    def test_asset_replacement_promotes_new_before_removing_backup(self):
-        old = {"id": 1, "name": "YTKACE-iOS16.ipa"}
-        staged = {"id": 2, "name": "YTKACE-iOS16.ipa.uploading"}
-        backup = {"id": 1, "name": "YTKACE-iOS16.ipa.previous"}
-        promoted = {"id": 2, "name": "YTKACE-iOS16.ipa"}
-        with patch("scripts.sync.upload_release_asset", return_value=staged) as upload:
-            with patch("scripts.sync.rename_release_asset", side_effect=[backup, promoted]) as rename:
-                with patch("scripts.sync.delete_release_asset") as delete:
-                    result = replace_release_asset("https://api.github.com/repos/o/r", "https://uploads.github.com/assets{?name,label}", [old], old["name"], Path("new.ipa"), "token")
-        self.assertEqual(result, promoted)
-        upload.assert_called_once()
-        calls = rename.call_args_list
-        self.assertEqual(calls[0].args[1], old)
-        self.assertTrue(calls[0].args[2].startswith(".YTKACE-iOS16.ipa."))
-        self.assertTrue(calls[0].args[2].endswith(".previous"))
-        self.assertEqual(calls[1].args, ("https://api.github.com/repos/o/r", staged, "YTKACE-iOS16.ipa", "token"))
-        delete.assert_called_once_with("https://api.github.com/repos/o/r", backup, "token")
+    def test_sync_step_does_not_receive_github_token(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/sync.yml").read_text()
+        sync_step = workflow.split("- name: Synchronize upstream release", 1)[1].split("- name: Publish source.json", 1)[0]
+        self.assertNotIn("GITHUB_TOKEN:", sync_step)
 
 if __name__ == "__main__": unittest.main()

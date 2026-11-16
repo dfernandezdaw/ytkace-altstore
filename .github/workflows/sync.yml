@@ -21,8 +21,6 @@ jobs:
         with:
           python-version: "3.12"
       - name: Synchronize upstream release
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: python scripts/sync.py
       - name: Publish source.json
         run: |
