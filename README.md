@@ -1,27 +1,34 @@
-# Fuente AltStore de YTKACE
+# YTKACE AltStore Source
 
-Mantiene una fuente pública de AltStore con la versión actual de las dos variantes oficiales de YTKACE: iOS 16 y iOS 17 o posterior. Las IPA originales se conservan sin modificar como assets del Release estable `ytkace-current`; no se incorporan al historial Git.
+This repository publishes a public AltStore source for the latest YTKACE release. It links directly to the official upstream IPA downloads, so this repository does not mirror the binaries.
 
-## Añadir a AltStore
+## Add the source to AltStore
 
-Añade esta URL como fuente en AltStore:
+Add this URL in AltStore:
 
 **https://raw.githubusercontent.com/dfernandezdaw/ytkace-altstore/main/source.json**
 
-Las versiones, builds, requisito mínimo de iOS, tamaño, entitlements firmados y descripciones de privacidad se extraen de las IPA oficiales. La sincronización valida ambas variantes, el Bundle Identifier común y los metadatos requeridos; si no puede extraerlos o validarlos, el job falla. El nombre de la app, desarrollador, descripción, icono, URLs y estructura de la fuente son configuración explícita del repositorio, no datos inferidos del paquete. El orden muestra primero la variante iOS 17+ y luego la compatible desde iOS 16, para que cada dispositivo reciba la opción adecuada.
+AltStore receives one or two versions, depending on the IPA assets in the latest upstream release. Each version keeps the official download URL and the minimum iOS version extracted from its package.
 
-## Sincronización
+## How synchronization works
 
-GitHub Actions consulta el último Release publicado de `itzzace/ytkace`, identifica sus assets IPA por el indicador de variante iOS 16 o iOS 17+ y falla de forma segura si falta alguna variante o la identificación es ambigua. Descarga los paquetes temporales, extrae `Info.plist`, el perfil de aprovisionamiento si lo hay y datos de tamaño/SHA-256, valida que ambas variantes compartan Bundle Identifier y publica los bytes originales con nombres estables `YTKACE-iOS16.ipa` y `YTKACE-iOS17.ipa` en el Release `ytkace-current`.
+GitHub Actions checks the latest published release in [itzzace/ytkace](https://github.com/itzzace/ytkace) every six hours. Maintainers can also start the workflow manually from **Actions → Sync YTKACE AltStore source → Run workflow**.
 
-El workflow se ejecuta automáticamente cada seis horas y también puede iniciarse manualmente desde **Actions → Sync YTKACE AltStore source → Run workflow**. Usa el `GITHUB_TOKEN` automático y el permiso `contents: write`. `source.json` se confirma en `main` únicamente cuando cambia. El Release estable mantiene solo los dos assets IPA actuales.
+The synchronizer:
 
-Las versiones, builds, requisito mínimo de iOS declarado en `Info.plist`, tamaño, entitlements firmados (extraídos con `codesign` del ejecutable de la app y sus extensiones) y descripciones de privacidad de los `Info.plist` proceden de los paquetes. Las declaraciones de permisos se combinan para ambas variantes en `appPermissions`, como exige AltStore. El job usa macOS para leer entitlements firmados; si falta la firma o no se pueden extraer, falla en vez de inventarlos. Los SHA-256 se comparan para evitar reemplazos innecesarios. La sincronización no modifica ni vuelve a firmar los paquetes.
+1. Accepts one or two `.ipa` assets with valid official upstream download URLs.
+2. Downloads each IPA to temporary runner storage to inspect its package metadata; it does not upload or retain the binaries in this repository.
+3. Builds `source.json` with the available versions and their original upstream download URLs.
+4. Commits `source.json` to `main` only when its contents change.
 
-## Variantes
+The workflow uses the automatic `GITHUB_TOKEN` with `contents: write` to publish source metadata. The synchronization step itself does not need a token to download public upstream assets.
 
-La inspección de la Release upstream v1.1.8 confirmó `YTKACE_1.1.8_YouTube_iOS16_21.33.6.ipa` para iOS 16 y `YTKACE_1.1.8_YouTube_21.46.3.ipa` para iOS 17+. El sincronizador decide a partir de los nombres detectados en cada último Release, no codifica esos nombres upstream.
+## Package metadata and validation
 
-## Errores
+Version, build, minimum iOS version, package size, signed entitlements, and privacy usage descriptions come from the IPA files. Entitlements are read with `codesign` on macOS from the app and its extensions. The app name, developer name, icon URL, source structure, and localized app description are repository configuration; the AltStore description remains Spanish (`YTKACE para AltStore.`).
 
-Consulta **Actions**, abre la ejecución fallida y revisa el paso **Synchronize upstream release**. La ejecución falla si no hay exactamente una IPA reconocible por variante, si los paquetes no contienen un único `Info.plist` de aplicación, faltan los metadatos de identidad/versión, los tamaños no coinciden o los Bundle Identifier difieren. Para errores de permisos de publicación, revisa que el workflow pueda usar su token con `contents: write`.
+The sync fails before replacing `source.json` if the release has no IPA or more than two, an official URL or asset size is invalid, package metadata is missing, a filename-derived variant conflicts with `MinimumOSVersion`, two assets resolve to the same iOS 16 or iOS 17+ variant, the minimum version is below iOS 16, or the packages do not share a bundle identifier. If a filename does not identify a variant, the extracted minimum iOS version is used: iOS 16 maps to the iOS 16 variant, and iOS 17 or later maps to the iOS 17+ variant.
+
+## Troubleshooting
+
+For a failed sync, open **Actions**, select the run, and inspect the **Synchronize upstream release** step. A failed validation leaves the previously published `source.json` unchanged. For source publication errors, check the workflow's `contents: write` permission.
