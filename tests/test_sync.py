@@ -203,4 +203,11 @@ class SyncTests(unittest.TestCase):
         sync_step = workflow.split("- name: Synchronize upstream release", 1)[1].split("- name: Publish source.json", 1)[0]
         self.assertNotIn("GITHUB_TOKEN:", sync_step)
 
+    def test_workflow_uses_node24_compatible_action_releases(self):
+        workflow = (Path(__file__).resolve().parents[1] / ".github/workflows/sync.yml").read_text()
+        self.assertIn("actions/checkout@v7.0.1", workflow)
+        self.assertIn("actions/setup-python@v7.1.0", workflow)
+        self.assertNotIn("actions/checkout@v4", workflow)
+        self.assertNotIn("actions/setup-python@v5", workflow)
+
 if __name__ == "__main__": unittest.main()
