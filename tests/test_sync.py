@@ -79,6 +79,47 @@ class SyncTests(unittest.TestCase):
         with self.assertRaises(SyncError): validate_variant_minimum_os("ios17", "16.0")
         with self.assertRaises(SyncError): validate_variant_minimum_os("ios16", None)
 
+    def test_minimum_os_classifies_unlabelled_variants(self):
+        self.assertEqual(sync_module.variant_from_minimum_os("16.0"), "ios16")
+        self.assertEqual(sync_module.variant_from_minimum_os("17.0"), "ios17")
+        self.assertEqual(sync_module.variant_from_minimum_os("18.0"), "ios17")
+        with self.assertRaisesRegex(SyncError, "below supported"):
+            sync_module.variant_from_minimum_os("15.0")
+
+    def test_sync_rejects_duplicate_unlabelled_variants_without_source_write(self):
+        assets = [
+            {"name": "first.ipa", "size": 100, "browser_download_url": "https://github.com/itzzace/ytkace/releases/download/v1/first.ipa"},
+            {"name": "second.ipa", "size": 101, "browser_download_url": "https://github.com/itzzace/ytkace/releases/download/v1/second.ipa"},
+        ]
+        metadata = [
+            {"bundleIdentifier": "com.google.ios.youtube", "version": "1", "buildVersion": "1", "minOSVersion": "16.0", "entitlements": [], "privacy": {}},
+            {"bundleIdentifier": "com.google.ios.youtube", "version": "2", "buildVersion": "2", "minOSVersion": "16.0", "entitlements": [], "privacy": {}},
+        ]
+        with tempfile.TemporaryDirectory() as td:
+            source_path = Path(td) / "source.json"
+            source_path.write_text("existing source\n")
+            with patch.object(sync_module, "SOURCE_PATH", source_path):
+                with patch.object(sync_module, "json_request", return_value={"tag_name": "v1", "assets": assets}):
+                    with patch.object(sync_module, "download", side_effect=[("a", 100), ("b", 101)]):
+                        with patch.object(sync_module, "extract_metadata", side_effect=metadata):
+                            with self.assertRaisesRegex(SyncError, "Multiple IPA assets match ios16"):
+                                sync_module.sync()
+            self.assertEqual(source_path.read_text(), "existing source\n")
+
+    def test_sync_rejects_unsupported_unlabelled_baseline_without_source_write(self):
+        asset = {"name": "unlabelled.ipa", "size": 100, "browser_download_url": "https://github.com/itzzace/ytkace/releases/download/v1/unlabelled.ipa"}
+        metadata = {"bundleIdentifier": "com.google.ios.youtube", "version": "1", "buildVersion": "1", "minOSVersion": "15.0", "entitlements": [], "privacy": {}}
+        with tempfile.TemporaryDirectory() as td:
+            source_path = Path(td) / "source.json"
+            source_path.write_text("existing source\n")
+            with patch.object(sync_module, "SOURCE_PATH", source_path):
+                with patch.object(sync_module, "json_request", return_value={"tag_name": "v1", "assets": [asset]}):
+                    with patch.object(sync_module, "download", return_value=("a", 100)):
+                        with patch.object(sync_module, "extract_metadata", return_value=metadata):
+                            with self.assertRaisesRegex(SyncError, "below supported"):
+                                sync_module.sync()
+            self.assertEqual(source_path.read_text(), "existing source\n")
+
     def test_source_uses_official_urls_and_supports_one_or_two_versions(self):
         base = {"bundleIdentifier": "example.ytkace", "version": "1", "buildVersion": "1", "size": 7, "minOSVersion": "16.0", "entitlements": ["aps-environment"], "privacy": {"NSCameraUsageDescription": "Camera"}, "downloadURL": "https://github.com/itzzace/ytkace/releases/download/v1/YTKACE-iOS16.ipa"}
         newer = {**base, "minOSVersion": "18.0", "downloadURL": "https://github.com/itzzace/ytkace/releases/download/v1/YTKACE-iOS17.ipa"}
@@ -123,12 +164,19 @@ class SyncTests(unittest.TestCase):
 
     def test_sync_uses_upstream_urls_without_release_api_or_token(self):
         ios16 = {"name": "YTKACE_1.1.8_YouTube_iOS16_21.33.6.ipa", "size": 100, "browser_download_url": "https://github.com/itzzace/ytkace/releases/download/v1.1.8/YTKACE_1.1.8_YouTube_iOS16_21.33.6.ipa"}
+        unlabelled16 = {"name": "YTKACE_1.1.8_YouTube_21.33.6.ipa", "size": 100, "browser_download_url": "https://github.com/itzzace/ytkace/releases/download/v1.1.8/YTKACE_1.1.8_YouTube_21.33.6.ipa"}
         ios17 = {"name": "YTKACE_1.1.8_YouTube_21.46.3.ipa", "size": 200, "browser_download_url": "https://github.com/itzzace/ytkace/releases/download/v1.1.8/YTKACE_1.1.8_YouTube_21.46.3.ipa"}
         metadata = [
             {"bundleIdentifier": "com.google.ios.youtube", "version": "21.33.6", "buildVersion": "21.33.6", "minOSVersion": "16.0", "entitlements": [], "privacy": {}},
             {"bundleIdentifier": "com.google.ios.youtube", "version": "21.46.3", "buildVersion": "21.46.3", "minOSVersion": "17.0", "entitlements": [], "privacy": {}},
         ]
-        for assets, records in (([ios17], [metadata[1]]), ([ios16, ios17], metadata)):
+        cases = (
+            ([ios17], [metadata[1]]),
+            ([unlabelled16], [metadata[0]]),
+            ([unlabelled16, ios17], metadata),
+            ([ios16, ios17], metadata),
+        )
+        for assets, records in cases:
             with self.subTest(asset_count=len(assets)), tempfile.TemporaryDirectory() as td:
                 source_path = Path(td) / "source.json"
                 with patch.object(sync_module, "SOURCE_PATH", source_path):

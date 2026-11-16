@@ -82,6 +82,14 @@ def parse_minimum_os(minimum_os):
         raise SyncError(f"Missing or invalid MinimumOSVersion: {minimum_os!r}")
     return tuple(int(part) for part in value.split("."))
 
+def variant_from_minimum_os(minimum_os):
+    major = parse_minimum_os(minimum_os)[0]
+    if major == 16:
+        return "ios16"
+    if major >= 17:
+        return "ios17"
+    raise SyncError(f"MinimumOSVersion {minimum_os!r} is below supported iOS 16 baseline")
+
 def validate_variant_minimum_os(variant, minimum_os):
     limits = {"ios16": 16, "ios17": 17}
     if variant not in limits:
@@ -150,7 +158,7 @@ def source_document(release, records):
 def sync():
     release = json_request(UPSTREAM)
     assets = validate_release(release)
-    records, checksums = [], {}
+    records, checksums, seen_variants = [], {}, set()
     with tempfile.TemporaryDirectory(prefix="ytkace-sync-") as tmp:
         for index, asset in enumerate(assets):
             path = Path(tmp) / f"{index}-{Path(asset['name']).name}"
@@ -162,7 +170,10 @@ def sync():
             if variant:
                 validate_variant_minimum_os(variant, metadata.get("minOSVersion"))
             else:
-                parse_minimum_os(metadata.get("minOSVersion"))
+                variant = variant_from_minimum_os(metadata.get("minOSVersion"))
+            if variant in seen_variants:
+                raise SyncError(f"Multiple IPA assets match {variant} after MinimumOSVersion classification")
+            seen_variants.add(variant)
             metadata["size"] = size
             metadata["downloadURL"] = asset["browser_download_url"]
             records.append(metadata)
