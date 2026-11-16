@@ -1,0 +1,35 @@
+name: Sync YTKACE AltStore source
+
+on:
+  schedule:
+    - cron: "0 */6 * * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ytkace-sync
+  cancel-in-progress: false
+
+jobs:
+  sync:
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Synchronize upstream release
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: python scripts/sync.py
+      - name: Publish source.json
+        run: |
+          if ! git diff --quiet -- source.json; then
+            git config user.name github-actions[bot]
+            git config user.email 41898282+github-actions[bot]@users.noreply.github.com
+            git add source.json
+            git commit -m "Update YTKACE AltStore source"
+            git push
+          fi

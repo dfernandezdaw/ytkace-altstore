@@ -1,0 +1,45 @@
+{
+  "name": "YTKACE",
+  "apps": [
+    {
+      "bundleIdentifier": "com.google.ios.youtube",
+      "name": "YTKACE",
+      "developerName": "itzzace",
+      "localizedDescription": "YTKACE para AltStore.",
+      "iconURL": "https://raw.githubusercontent.com/itzzace/ytkace/main/screenshots/framed/settings.png",
+      "versions": [
+        {
+          "version": "21.46.3",
+          "buildVersion": "21.46.3",
+          "date": "2026-11-15T20:23:33Z",
+          "downloadURL": "https://github.com/dfernandezdaw/ytkace-altstore/releases/download/ytkace-current/YTKACE-iOS17.ipa",
+          "size": 141821255,
+          "minOSVersion": "17.0"
+        },
+        {
+          "version": "21.33.6",
+          "buildVersion": "21.33.6",
+          "date": "2026-11-15T20:23:33Z",
+          "downloadURL": "https://github.com/dfernandezdaw/ytkace-altstore/releases/download/ytkace-current/YTKACE-iOS16.ipa",
+          "size": 134415519,
+          "minOSVersion": "16.0"
+        }
+      ],
+      "appPermissions": {
+        "entitlements": [],
+        "privacy": {
+          "NSCameraUsageDescription": "This lets you create videos using the app.",
+          "NSUserTrackingUsageDescription": "To personalize ads and provide ad measurement, YouTube will link activity from this app with activity from non-Google apps and websites.",
+          "NSBluetoothPeripheralUsageDescription": "YouTube needs bluetooth access to scan for nearby Cast devices.",
+          "NSLocalNetworkUsageDescription": "Access to your network allows YouTube to discover and connect to devices such as your TV.",
+          "NSAppleMusicUsageDescription": "This lets you add your own audio files to your videos.",
+          "NSMicrophoneUsageDescription": "This lets you include audio with your videos and search using your voice.",
+          "NSLocationWhenInUseUsageDescription": "This enables local content discovery, improved recommendations, and enhanced search results.",
+          "NSContactsUsageDescription": "Your contacts will be sent to YouTube servers to help you find friends to share videos with.",
+          "NSPhotoLibraryUsageDescription": "This lets you upload media you've already created."
+        }
+      }
+    }
+  ],
+  "news": []
+}
